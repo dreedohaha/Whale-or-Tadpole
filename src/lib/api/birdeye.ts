@@ -49,6 +49,28 @@ async function rpc(method: string, params: any[]) {
   return json?.result;
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function rpcSafe<T>(method: string, params: any[], fallback: T, retries = 1): Promise<T> {
+  let lastError: unknown;
+
+  for (let i = 0; i <= retries; i++) {
+    try {
+      return (await rpc(method, params)) as T;
+    } catch (error) {
+      lastError = error;
+      if (i < retries) {
+        await sleep(250 * (i + 1));
+      }
+    }
+  }
+
+  console.warn(`RPC ${method} failed, using fallback.`, lastError);
+  return fallback;
+}
+
 async function getSolPriceUsd() {
   try {
     const price = await fetchBirdeye(`/defi/price?address=${SOL_MINT}`);
@@ -101,9 +123,14 @@ function getTxCount(txListData: any, transferTotalData: any): number {
 
 async function getWalletSnapshotFromRpcFallback(wallet: string): Promise<BirdeyeSnapshot> {
   const [balanceRes, signatures, tokenAccounts, solPriceUsd] = await Promise.all([
-    rpc('getBalance', [wallet]),
-    rpc('getSignaturesForAddress', [wallet, { limit: 1000 }]),
-    rpc('getTokenAccountsByOwner', [wallet, { programId: TOKEN_PROGRAM }, { encoding: 'jsonParsed' }]),
+    rpcSafe<{ value: number }>('getBalance', [wallet], { value: 0 }, 1),
+    rpcSafe<any[]>('getSignaturesForAddress', [wallet, { limit: 200 }], [], 1),
+    rpcSafe<any>(
+      'getTokenAccountsByOwner',
+      [wallet, { programId: TOKEN_PROGRAM }, { encoding: 'jsonParsed' }],
+      { value: [] },
+      1,
+    ),
     getSolPriceUsd(),
   ]);
 
